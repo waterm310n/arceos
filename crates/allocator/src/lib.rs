@@ -31,6 +31,10 @@ mod tlsf;
 #[cfg(feature = "tlsf")]
 pub use tlsf::TlsfByteAllocator;
 
+// 直接导出EarlyAllocator
+mod early;
+pub use early::EarlyAllocator;
+
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
