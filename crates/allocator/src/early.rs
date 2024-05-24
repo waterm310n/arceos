@@ -1,5 +1,5 @@
 
-use core::alloc::Layout;
+
 use core::ptr::NonNull;
 use rlsf::Tlsf;
 use crate::{AllocError, AllocResult, BaseAllocator, PageAllocator,ByteAllocator};
@@ -60,7 +60,7 @@ impl<const PAGE_SIZE: usize> BaseAllocator for EarlyAllocator<PAGE_SIZE>  {
         self.total_bytes = size;
     }
 
-    fn add_memory(&mut self, start: usize, size: usize) -> AllocResult {
+    fn add_memory(&mut self, _start: usize, _size: usize) -> AllocResult {
         unimplemented!()   
     }
 }

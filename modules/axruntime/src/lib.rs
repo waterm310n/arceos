@@ -140,6 +140,19 @@ pub extern "C" fn rust_main(cpu_id: usize, dtb: usize) -> ! {
     #[cfg(feature = "alloc")]
     init_allocator();
 
+    // Parse fdt for early memory info
+    let dtb_info = match parse_dtb(dtb.into()) {
+        Ok(info) => info,
+        Err(err) => panic!("Bad dtb {:?}", err),
+    };
+    info!("DTB info: ==================================");
+    info!("Memory: {:#x}, size: {:#x}", dtb_info.memory_addr, dtb_info.memory_size);
+    info!("Virtio_mmio[{}]:", dtb_info.mmio_regions.len());
+    for r in dtb_info.mmio_regions {
+        info!("\t{:#x}, size: {:#x}", r.0, r.1);
+    }
+    info!("============================================");
+
     #[cfg(feature = "paging")]
     {
         info!("Initialize kernel page table...");
@@ -296,4 +309,91 @@ fn init_tls() {
     let main_tls = axhal::tls::TlsArea::alloc();
     unsafe { axhal::arch::write_thread_pointer(main_tls.tls_ptr() as usize) };
     core::mem::forget(main_tls);
+}
+
+extern crate alloc;
+
+use core::str;
+use alloc::string::String;
+use alloc::vec::Vec;
+use axdtb::Reader;
+
+// 参考类型定义
+struct DtbInfo {
+    memory_addr: usize,
+    memory_size: usize,
+    mmio_regions: Vec<(usize, usize)>,
+}
+
+// 解析dtb
+fn parse_dtb(dtb_pa: usize) -> Result<DtbInfo,()> {
+    // 这里就是对axdtb组件的调用，传入dtb指针，解析后输出结果。这个函数和axdtb留给大家实现
+    unsafe {
+        let mut dtb_info = DtbInfo{
+            memory_addr:0,
+            memory_size:0,
+            mmio_regions:Vec::new()
+        };
+        let reader = Reader::read_from_address(dtb_pa);
+        if let Ok(reader) = reader {
+            let root = reader.struct_items();
+            // dtb_info.memory_addr = addr.value();
+            // 获取memory的节点的reg属性
+            let (reg, _) = root.path_struct_items("/memory/reg").next().unwrap();
+            // 手动解析reg属性，前8个字节表示地址，后8个字节表示大小
+            if let Ok(reg) = reg.value() {
+                let mut i = 8;
+                while i > 0 {
+                    i -= 1;
+                    // info!("{:?}",(1<<8*(7-i)));
+                    dtb_info.memory_addr += reg[i] as usize*(1<<8*(7-i));
+                }
+                i = 8;
+                while i > 0 {
+                    i -= 1;
+                    // info!("{:?}",(1<<8*(7-i)));
+                    dtb_info.memory_size += reg[i+8] as usize*(1<<8*(7-i));
+                }
+            }
+            let mut flag = false;
+            for item in root{
+                if item.is_begin_node()  { // 当前item是beginNode
+                    if let Ok(name) = item.name() {
+                        if name.starts_with("virtio_mmio") {
+                            flag = true;
+                        }
+                    }
+                }else if item.is_property() && flag {//当前item是属性，并且当前处在virtio_mmio内部
+                    if let Ok(name) = item.name() {
+                        if name.eq_ignore_ascii_case("reg") {
+                            if let Ok(reg) = item.value() {
+                                let mut region = (0,0); // 区域
+                                let mut i = 8; //丑陋的手动解析
+                                while i > 0 {
+                                    i -= 1;
+                                    // info!("{:?}",(1<<8*(7-i)));
+                                    region.0 += reg[i] as usize*(1<<8*(7-i));
+                                }
+                                i = 8;
+                                while i > 0 {
+                                    i -= 1;
+                                    // info!("{:?}",(1<<8*(7-i)));
+                                    region.1 += reg[i+8] as usize*(1<<8*(7-i));
+                                }
+                                dtb_info.mmio_regions.push(region);
+                            }
+                        }
+                    }
+                }else{
+                    flag = false;
+                }
+            }
+            
+
+            return Ok(dtb_info)
+        }else{
+            return Err(())
+        }
+    }
+    // unimplemented!()
 }
