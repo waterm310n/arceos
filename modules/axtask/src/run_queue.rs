@@ -24,6 +24,8 @@ pub(crate) struct AxRunQueue {
 
 impl AxRunQueue {
     pub fn new() -> SpinNoIrq<Self> {
+        #[cfg(feature = "preempt")]
+        info!("------------preempt feature enabled------------");
         let gc_task = TaskInner::new(gc_entry, "gc".into(), axconfig::TASK_STACK_SIZE);
         let mut scheduler = Scheduler::new();
         scheduler.add_task(gc_task);
