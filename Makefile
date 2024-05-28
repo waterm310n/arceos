@@ -27,7 +27,7 @@
 #     - `GW`: Gateway IPv4 address (default is 10.0.2.2 for QEMU user netdev)
 
 # General options
-ARCH ?= x86_64
+ARCH ?= riscv64
 PLATFORM ?=
 SMP ?= 1
 MODE ?= release
@@ -35,7 +35,7 @@ LOG ?= warn
 V ?=
 
 # App options
-A ?= apps/helloworld
+A ?= apps/loader
 APP ?= $(A)
 FEATURES ?=
 APP_FEATURES ?=
@@ -177,11 +177,11 @@ justrun:
 debug: build
 	$(call run_qemu_debug) &
 	sleep 1
-	$(GDB) $(OUT_ELF) \
-	  -ex 'target remote localhost:1234' \
-	  -ex 'b rust_entry' \
-	  -ex 'continue' \
-	  -ex 'disp /16i $$pc'
+	# $(GDB) $(OUT_ELF) \
+	#   -ex 'target remote localhost:1234' \
+	#   -ex 'b main' \
+	#   -ex 'continue' \
+	#   -ex 'disp /16i $$pc'
 
 clippy:
 ifeq ($(origin ARCH), command line)
