@@ -223,3 +223,51 @@ fn main() {
     println!("Load payload ok!");
 }
 ```
+
+# 练习3
+这块我觉得主要的难点在于nop程序的生成，因为我对riscv不了解，我一开始直接将wfi生成为nop，但是没有成功。然后将它的代码改成下面的代码后成功了。
+```rust
+#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[no_mangle]
+unsafe extern "C" fn _start() -> () {
+    core::arch::asm!(
+        "nop"
+    );
+}
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+```
+
+rust 解析代码，这块很简单，直接在APP_INFO结构体上添加excute_code代码即可。
+```rust
+pub fn excute_code(&self) { //执行App
+
+    let load_code = unsafe { core::slice::from_raw_parts((self.app_addr+12) as *const u8, self.app_size)};
+
+    // app running aspace
+    // SBI(0x80000000) -> App <- Kernel(0x80200000)
+    // 0xffff_ffc0_0000_0000
+    const RUN_START: usize = 0xffff_ffc0_8010_0000;
+    let run_code = unsafe {
+        core::slice::from_raw_parts_mut(RUN_START as *mut u8, self.app_size)
+    };
+    run_code.copy_from_slice(load_code);
+    println!("run code {:?}; address [{:?}]", run_code, run_code.as_ptr());
+    println!("Execute app ...");
+
+    // execute app
+    unsafe { core::arch::asm!("
+        li      t2, {run_start}
+        jalr    t2
+        ",
+        run_start = const RUN_START,
+    )}
+}
+```

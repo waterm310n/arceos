@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "axstd", no_std)]
 #![cfg_attr(feature = "axstd", no_main)]
+#![feature(asm_const)] 
 
 #[cfg(feature = "axstd")]
 use axstd::println;
@@ -42,6 +43,30 @@ impl AppInfo {
     pub fn app_size(&self) -> usize {
         self.app_size
     }
+
+    pub fn excute_code(&self) { //执行App
+
+        let load_code = unsafe { core::slice::from_raw_parts((self.app_addr+12) as *const u8, self.app_size)};
+
+        // app running aspace
+        // SBI(0x80000000) -> App <- Kernel(0x80200000)
+        // 0xffff_ffc0_0000_0000
+        const RUN_START: usize = 0xffff_ffc0_8010_0000;
+        let run_code = unsafe {
+            core::slice::from_raw_parts_mut(RUN_START as *mut u8, self.app_size)
+        };
+        run_code.copy_from_slice(load_code);
+        println!("run code {:?}; address [{:?}]", run_code, run_code.as_ptr());
+        println!("Execute app ...");
+
+        // execute app
+        unsafe { core::arch::asm!("
+            li      t2, {run_start}
+            jalr    t2
+            ",
+            run_start = const RUN_START,
+        )}
+    }
 }
 
 #[cfg_attr(feature = "axstd", no_mangle)]
@@ -60,7 +85,7 @@ fn main() {
         for i in 0..app_cnt {
             println!("app {i} --------------------------------");
             app_info.init(cur_addr);
-            app_info.print_content();
+            app_info.excute_code();
             cur_addr += 12+app_info.app_size();
         }
     }else{//单个APP
