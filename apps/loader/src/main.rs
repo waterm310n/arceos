@@ -13,14 +13,14 @@ struct AppInfo {
 }
 
 impl AppInfo {
-    fn new() -> Self{
+    pub fn new() -> Self{
         Self {
             app_addr:0,
             app_size:0,
         }
     }
 
-    fn init(& mut self,app_addr:usize) {
+    pub fn init(& mut self,app_addr:usize) {
         self.app_addr = app_addr;
         let header_size = 12; 
         let header = unsafe { core::slice::from_raw_parts(app_addr as *const u8, header_size) };
@@ -28,7 +28,7 @@ impl AppInfo {
         if magic_number != 0xDEADBEAF{
             panic!("App header wants :0xDEADBEAF, real :{:x}",magic_number);
         }else {
-            println!("App header start with magic_number {:x}",magic_number);
+            println!("App header start with magic number {:x}",magic_number);
         }
         self.app_size = bytes_to_usize(&header[4..12]);
         println!("App size is {}",self.app_size);
@@ -39,15 +39,35 @@ impl AppInfo {
         println!("App content: {:?}",code);
     }
     
+    pub fn app_size(&self) -> usize {
+        self.app_size
+    }
 }
 
 #[cfg_attr(feature = "axstd", no_mangle)]
 fn main() {
-
+    let app_addr = PLASH_START;
     println!("Load payload ...");
-    let mut app_info = AppInfo::new();
-    app_info.init(PLASH_START);
-    app_info.print_content();
+    let magic_number = unsafe { core::slice::from_raw_parts(app_addr as *const u8, 4) };
+    let magic_number = bytes_to_u32(magic_number);
+    if 0x89abcdef == magic_number{//存在多个app
+        println!("find multi app magic number {:X}",magic_number);
+        let app_cnt = unsafe { core::slice::from_raw_parts((app_addr+4) as *const u8, 4) };
+        let app_cnt = bytes_to_u32(app_cnt);
+        println!("app cnt is {}",app_cnt);
+        let mut cur_addr = app_addr+8;
+        let mut app_info = AppInfo::new();
+        for i in 0..app_cnt {
+            println!("app {i} --------------------------------");
+            app_info.init(cur_addr);
+            app_info.print_content();
+            cur_addr += 12+app_info.app_size();
+        }
+    }else{//单个APP
+        let mut app_info = AppInfo::new();
+        app_info.init(PLASH_START);
+        app_info.print_content();
+    }
     println!("Load payload ok!");
 }
 
