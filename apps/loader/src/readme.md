@@ -271,3 +271,135 @@ pub fn excute_code(&self) { //执行App
     )}
 }
 ```
+
+# 练习5
+这个练习感觉主要是编写app的代码，其中要考虑手动完成编译器的上下文保存工作，我写的比较一般，大概如下所示。
+```rust
+#![feature(asm_const)]
+#![no_std]
+#![no_main]
+
+const SYS_HELLO: usize = 1;
+const SYS_PUTCHAR: usize = 2;
+const SYS_TERMINATE:usize = 3;
+
+// 不知道为什么编译器不能自己生成保护上下文的应用，只能手动保存了
+fn hello(){
+    // 保存ra可以保证即使不调用terminate也可以直接退出，方便批处理
+    unsafe{
+        core::arch::asm!("
+            addi    sp,sp,-16
+            sd      ra, 0(sp)
+            sd      a7, 8(sp)
+
+            mv      t1, a7
+            li      t0, {abi_num}
+            slli    t0, t0, 3
+            add     t1, t1, t0
+            ld      t1, (t1)
+
+            jalr    ra,t1
+            ld      a7, 8(sp)
+            ld      ra, 0(sp)
+            addi sp, sp, 16
+            ",
+            abi_num = const SYS_HELLO,
+        )  
+    }
+}
+
+// 暂时只支持ascii码，应该？
+fn putchar(c: char){
+    let c = c as u8;
+    unsafe{
+        core::arch::asm!("
+            addi    sp,sp,-16
+            sd      ra, 0(sp)
+            sd      a7, 8(sp)
+
+            mv      t1, a7
+            li      t0, {abi_num}
+            slli    t0, t0, 3
+            add     t1, t1, t0
+            ld      t1, (t1)
+
+            jalr    ra,t1
+            ld      a7, 8(sp)
+            ld      ra, 0(sp)
+            addi sp, sp, 16
+            ",
+            abi_num = const SYS_PUTCHAR,
+            in("a0") c,
+        )  
+    }
+}
+
+fn puts(s: &str){
+ 
+    for ch in s.bytes(){
+        putchar(ch as char)
+    }
+}
+
+fn exit(){
+    unsafe{
+        core::arch::asm!("
+            addi    sp,sp,-16
+            sd      ra, 0(sp)
+            sd      a7, 8(sp)
+
+            mv      t1, a7
+            li      t0, {abi_num}
+            slli    t0, t0, 3
+            add     t1, t1, t0
+            ld      t1, (t1)
+
+            jalr    ra,t1
+            ld      a7, 8(sp)
+            ld      ra, 0(sp)
+            addi sp, sp, 16
+            ",
+            abi_num = const SYS_TERMINATE,
+        )  
+    }
+}
+
+#[no_mangle]
+unsafe extern "C" fn _start() -> () {
+    hello();
+    puts("i can just print char in ascii,sorry :(\n");
+    exit();
+}
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+```
+
+同时为了方便编译，我修改了之前的shell脚本，现在它长下面这样
+```bash
+#!/bin/bash
+
+app_name="step4"
+with_header_flag=true
+
+cargo build --target riscv64gc-unknown-none-elf --release
+
+rust-objcopy --binary-architecture=riscv64 --strip-all -O binary target/riscv64gc-unknown-none-elf/release/hello_app ./${app_name}.bin
+
+if [ "$with_header_flag" = true ];then
+python3 ./scripts/add_image_header.py -i ./${app_name}.bin -o ./${app_name}_with_header.bin
+fi
+
+dd if=/dev/zero of=./apps.bin bs=1M count=32
+if [ "$with_header_flag" = true ];then
+dd if=./${app_name}_with_header.bin of=./apps.bin conv=notrunc
+else
+dd if=./${app_name}.bin of=./apps.bin conv=notrunc
+fi
+mkdir -p ../arceos/payload
+mv ./apps.bin ../arceos/payload/apps.bin
+```

@@ -3,16 +3,25 @@
 #![feature(asm_const)] 
 
 #[cfg(feature = "axstd")]
-use axstd::{println,process};
+use axstd::{print,println,process};
 
 const SYS_HELLO: usize = 1;
 const SYS_PUTCHAR: usize = 2;
+#[cfg(feature = "axstd")]
 const SYS_TERMINATE:usize = 3;
 
 static mut ABI_TABLE: [usize; 16] = [0; 16];
 
 fn register_abi(num: usize, handle: usize) {
+    println!("SYS_CALL_NUM[{}] address is {:x} ",num,handle);
     unsafe { ABI_TABLE[num] = handle; }
+}
+
+fn register_multi_abi(){
+    register_abi(SYS_HELLO, abi_hello as usize);
+    register_abi(SYS_PUTCHAR, abi_putchar as usize);
+    #[cfg(feature = "axstd")]
+    register_abi(SYS_TERMINATE, abi_terminate as usize);
 }
 
 fn abi_hello() {
@@ -20,7 +29,8 @@ fn abi_hello() {
 }
 
 fn abi_putchar(c: char) {
-    println!("[ABI:Print] {c}");
+    print!("{c}");
+    // println!("[ABI:Print] {c}");
 }
 
 #[cfg(feature = "axstd")]
@@ -53,7 +63,7 @@ impl AppInfo {
         if magic_number != 0xDEADBEAF{
             panic!("App header wants :0xDEADBEAF, real :{:x}",magic_number);
         }else {
-            println!("App header start with magic number {:x}",magic_number);
+            println!("App header start with legal magic number {:x}",magic_number);
         }
         self.app_size = bytes_to_usize(&header[4..12]);
         println!("App size is {}",self.app_size);
@@ -82,55 +92,27 @@ impl AppInfo {
         run_code.copy_from_slice(load_code);
         println!("run code {:?}; address [{:?}]", run_code, run_code.as_ptr());
         println!("Execute app ...");
-
         // execute app
+        // 第一行将abi_table的地址存放到a7寄存器中
+        // 第二行将app_code的地址存放到t2寄存器中
+        // 第三行跳转到t2寄存器所指向的地址，然后执行代码
         unsafe { core::arch::asm!("
+            la      a7, {abi_table} 
             li      t2, {run_start}
             jalr    t2
             ",
             run_start = const RUN_START,
+            abi_table = sym ABI_TABLE,
         )}
+
     }
 }
 
 #[cfg_attr(feature = "axstd", no_mangle)]
 fn main() {
     let app_addr = PLASH_START;
+    register_multi_abi();
     println!("Load payload ...");
-    
-    register_abi(SYS_HELLO, abi_hello as usize);
-    register_abi(SYS_PUTCHAR, abi_putchar as usize);
-    #[cfg(feature = "axstd")]
-    register_abi(SYS_TERMINATE, abi_terminate as usize);
-    let arg0: u8 = b'A';
-
-    // execute app
-    unsafe { core::arch::asm!("
-        li      t0, {abi_num}
-        slli    t0, t0, 3
-        la      t1, {abi_table}
-        add     t1, t1, t0
-        ld      t1, (t1)
-        jalr    t1",
-        abi_table = sym ABI_TABLE,
-        //abi_num = const SYS_HELLO,
-        abi_num = const SYS_PUTCHAR,
-        in("a0") arg0,
-    )}
-
-    #[cfg(feature = "axstd")]
-    unsafe { core::arch::asm!("
-        li      t0, {abi_num}
-        slli    t0, t0, 3
-        la      t1, {abi_table}
-        add     t1, t1, t0
-        ld      t1, (t1)
-        jalr    t1",
-        abi_table = sym ABI_TABLE,
-        //abi_num = const SYS_HELLO,
-        abi_num = const SYS_TERMINATE,
-        in("a0") arg0,
-    )}
 
     let magic_number = unsafe { core::slice::from_raw_parts(app_addr as *const u8, 4) };
     let magic_number = bytes_to_u32(magic_number);
@@ -150,7 +132,7 @@ fn main() {
     }else{//单个APP
         let mut app_info = AppInfo::new();
         app_info.init(PLASH_START);
-        app_info.print_content();
+        app_info.excute_code()
     }
     println!("Load payload ok!");
 }
