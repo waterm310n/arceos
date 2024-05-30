@@ -3,7 +3,31 @@
 #![feature(asm_const)] 
 
 #[cfg(feature = "axstd")]
-use axstd::println;
+use axstd::{println,process};
+
+const SYS_HELLO: usize = 1;
+const SYS_PUTCHAR: usize = 2;
+const SYS_TERMINATE:usize = 3;
+
+static mut ABI_TABLE: [usize; 16] = [0; 16];
+
+fn register_abi(num: usize, handle: usize) {
+    unsafe { ABI_TABLE[num] = handle; }
+}
+
+fn abi_hello() {
+    println!("[ABI:Hello] Hello, Apps!");
+}
+
+fn abi_putchar(c: char) {
+    println!("[ABI:Print] {c}");
+}
+
+#[cfg(feature = "axstd")]
+fn abi_terminate(){
+    println!("[ABI:Terminate]");
+    process::exit(0);
+}
 
 const PLASH_START: usize = 0x22000000;
 
@@ -73,6 +97,41 @@ impl AppInfo {
 fn main() {
     let app_addr = PLASH_START;
     println!("Load payload ...");
+    
+    register_abi(SYS_HELLO, abi_hello as usize);
+    register_abi(SYS_PUTCHAR, abi_putchar as usize);
+    #[cfg(feature = "axstd")]
+    register_abi(SYS_TERMINATE, abi_terminate as usize);
+    let arg0: u8 = b'A';
+
+    // execute app
+    unsafe { core::arch::asm!("
+        li      t0, {abi_num}
+        slli    t0, t0, 3
+        la      t1, {abi_table}
+        add     t1, t1, t0
+        ld      t1, (t1)
+        jalr    t1",
+        abi_table = sym ABI_TABLE,
+        //abi_num = const SYS_HELLO,
+        abi_num = const SYS_PUTCHAR,
+        in("a0") arg0,
+    )}
+
+    #[cfg(feature = "axstd")]
+    unsafe { core::arch::asm!("
+        li      t0, {abi_num}
+        slli    t0, t0, 3
+        la      t1, {abi_table}
+        add     t1, t1, t0
+        ld      t1, (t1)
+        jalr    t1",
+        abi_table = sym ABI_TABLE,
+        //abi_num = const SYS_HELLO,
+        abi_num = const SYS_TERMINATE,
+        in("a0") arg0,
+    )}
+
     let magic_number = unsafe { core::slice::from_raw_parts(app_addr as *const u8, 4) };
     let magic_number = bytes_to_u32(magic_number);
     if 0x89abcdef == magic_number{//存在多个app
