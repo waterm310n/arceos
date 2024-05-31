@@ -78,16 +78,16 @@ impl AppInfo {
         self.app_size
     }
 
-    pub fn excute_code(&self) { //执行App
+    pub fn excute_code(&self,run_start:usize) { //执行App
 
         let load_code = unsafe { core::slice::from_raw_parts((self.app_addr+12) as *const u8, self.app_size)};
 
         // app running aspace
         // SBI(0x80000000) -> App <- Kernel(0x80200000)
         // 0xffff_ffc0_0000_0000
-        const RUN_START: usize = 0xffff_ffc0_8010_0000;
+        // const RUN_START: usize = 0x4010_0000;
         let run_code = unsafe {
-            core::slice::from_raw_parts_mut(RUN_START as *mut u8, self.app_size)
+            core::slice::from_raw_parts_mut(run_start as *mut u8, self.app_size)
         };
         run_code.copy_from_slice(load_code);
         println!("run code {:?}; address [{:?}]", run_code, run_code.as_ptr());
@@ -98,10 +98,9 @@ impl AppInfo {
         // 第三行跳转到t2寄存器所指向的地址，然后执行代码
         unsafe { core::arch::asm!("
             la      a7, {abi_table} 
-            li      t2, {run_start}
             jalr    t2
             ",
-            run_start = const RUN_START,
+            in("t2") run_start,
             abi_table = sym ABI_TABLE,
         )}
 
@@ -110,10 +109,15 @@ impl AppInfo {
 
 #[cfg_attr(feature = "axstd", no_mangle)]
 fn main() {
+    // switch aspace from kernel to app
+    unsafe { init_app_page_table(); }
+    unsafe { switch_app_aspace(); }
+    const RUN_START: usize = 0x4010_0000;
+
     let app_addr = PLASH_START;
     register_multi_abi();
     println!("Load payload ...");
-
+    
     let magic_number = unsafe { core::slice::from_raw_parts(app_addr as *const u8, 4) };
     let magic_number = bytes_to_u32(magic_number);
     if 0x89abcdef == magic_number{//存在多个app
@@ -126,15 +130,14 @@ fn main() {
         for i in 0..app_cnt {
             println!("app {i} --------------------------------");
             app_info.init(cur_addr);
-            app_info.excute_code();
+            app_info.excute_code(RUN_START+i as usize * 0x10_000usize);
             cur_addr += 12+app_info.app_size();
         }
     }else{//单个APP
         let mut app_info = AppInfo::new();
         app_info.init(PLASH_START);
-        app_info.excute_code()
+        app_info.excute_code(RUN_START)
     }
-    println!("Load payload ok!");
 }
 
 #[inline]
@@ -145,4 +148,32 @@ fn bytes_to_usize(bytes: &[u8]) -> usize {
 #[inline]
 fn bytes_to_u32(bytes: &[u8]) -> u32 {
     u32::from_be_bytes(bytes.try_into().unwrap())
+}
+
+//
+// App aspace
+//
+
+#[link_section = ".data.app_page_table"]
+static mut APP_PT_SV39: [u64; 512] = [0; 512];
+
+unsafe fn init_app_page_table() {
+    // 0x8000_0000..0xc000_0000, VRWX_GAD, 1G block
+    APP_PT_SV39[2] = (0x80000 << 10) | 0xef;
+    // 0xffff_ffc0_8000_0000..0xffff_ffc0_c000_0000, VRWX_GAD, 1G block
+    APP_PT_SV39[0x102] = (0x80000 << 10) | 0xef;
+
+    // 0x0000_0000..0x4000_0000, VRWX_GAD, 1G block
+    APP_PT_SV39[0] = (0x00000 << 10) | 0xef;
+
+    // For App aspace!
+    // 0x4000_0000..0x8000_0000, VRWX_GAD, 1G block
+    APP_PT_SV39[1] = (0x80000 << 10) | 0xef;
+}
+
+unsafe fn switch_app_aspace() {
+    use riscv::register::satp;
+    let page_table_root = APP_PT_SV39.as_ptr() as usize - axconfig::PHYS_VIRT_OFFSET;
+    satp::set(satp::Mode::Sv39, 0, page_table_root >> 12);
+    riscv::asm::sfence_vma_all();
 }
